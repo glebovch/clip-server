@@ -56,27 +56,24 @@ class Inference(Worker):
         self.model, self.preprocess = clip.load("ViT-B/32", device=self.device)
 
 
-    def forward_single(self, data: dict) -> dict:
+    def forward(self, data: List[dict]) -> List[dict]:
         logger.info("Worker=%d on device=%s is processing...", self.worker_id, self.device)
         logger.info("Empty cache...")
         gc.collect()
         torch.cuda.empty_cache()
         try:
             inference_time = time()
-            image = self.preprocess(data["image"]).unsqueeze(0).to(self.device)
-            text = clip.tokenize(data["text"]).to(self.device)
+            image = torch.cat(tuple(self.preprocess(d["image"]).unsqueeze(0).to(self.device) for d in data))
+            text = clip.tokenize([d["text"] for d in data]).to(self.device)
             logits_per_image, logits_per_text = self.model(image, text)
             inference_time = round(time() - inference_time, 2)
             result = {}
-            result["similarity"] = logits_per_text.item()
+            result["similarities"] = logits_per_text.tolist()
             result["inference_time"] = inference_time
         except Exception as err:
             raise err
 
-        return result
-
-    def forward(self, data: List[dict]) -> List[dict]:
-        return [self.forward_single(element) for element in data]
+        return [{"similarities": s} for s in result["similarities"]]
 
 
 
@@ -87,7 +84,7 @@ class Postprocess(MsgpackMixin, Worker):
         super().__init__()
 
     def forward(self, data: dict):
-        return f"Similarity: {data['similarity']}"
+        return f"Similarities: {data['similarities']}"
 
 
 def run_server():
@@ -100,3 +97,4 @@ def run_server():
 
 if __name__ == "__main__":
     run_server()
+
